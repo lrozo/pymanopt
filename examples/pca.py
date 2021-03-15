@@ -1,94 +1,54 @@
 import os
-
-import autograd.numpy as np
-import tensorflow as tf
-import theano.tensor as T
+import argparse
+import numpy as np
 import torch
-from examples._tools import ExampleRunner
-
 import pymanopt
 from pymanopt.manifolds import Stiefel
 from pymanopt.solvers import TrustRegions
 
-
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 
-SUPPORTED_BACKENDS = (
-    "Autograd", "Callable", "PyTorch", "TensorFlow", "Theano"
-)
+def _parse_arguments(name):
+    parser = argparse.ArgumentParser(name)
+    parser.add_argument("-b", "--backend", help="backend to run the test on", default="PyTorch")
+    parser.add_argument("-q", "--quiet", action="store_true")
+    return vars(parser.parse_args())
 
 
-def create_cost_egrad_ehess(backend, samples, num_components):
-    dimension = samples.shape[-1]
-    egrad = ehess = None
+class ExampleRunner:
+    def __init__(self, run_function, name):
+        self._arguments = _parse_arguments(name)
+        self._run_function = run_function
+        self._name = name
 
-    if backend == "Autograd":
-        @pymanopt.function.Autograd
-        def cost(w):
-            return np.linalg.norm(samples - samples @ w @ w.T) ** 2
-    elif backend == "Callable":
-        @pymanopt.function.Callable
-        def cost(w):
-            return np.linalg.norm(samples - samples @ w @ w.T) ** 2
-
-        @pymanopt.function.Callable
-        def egrad(w):
-            return -2 * (
-                samples.T @ (samples - samples @ w @ w.T) +
-                (samples - samples @ w @ w.T).T @ samples
-            ) @ w
-
-        @pymanopt.function.Callable
-        def ehess(w, h):
-            return -2 * (
-                samples.T @ (samples - samples @ w @ h.T) @ w +
-                samples.T @ (samples - samples @ h @ w.T) @ w +
-                samples.T @ (samples - samples @ w @ w.T) @ h +
-                (samples - samples @ w @ h.T).T @ samples @ w +
-                (samples - samples @ h @ w.T).T @ samples @ w +
-                (samples - samples @ w @ w.T).T @ samples @ h
-            )
-    elif backend == "PyTorch":
-        samples_ = torch.from_numpy(samples)
-
-        @pymanopt.function.PyTorch
-        def cost(w):
-            projector = torch.matmul(w, torch.transpose(w, 1, 0))
-            return torch.norm(
-                samples_ - torch.matmul(samples_, projector)) ** 2
-    elif backend == "TensorFlow":
-        w = tf.Variable(
-            tf.zeros((dimension, num_components), dtype=np.float64), name="w")
-
-        @pymanopt.function.TensorFlow(w)
-        def cost(w):
-            projector = tf.matmul(w, tf.transpose(w))
-            return tf.norm(samples - tf.matmul(samples, projector)) ** 2
-    elif backend == "Theano":
-        w = T.matrix()
-
-        @pymanopt.function.Theano(w)
-        def cost(w):
-            projector = T.dot(w, w.T)
-            return (samples - T.dot(samples, projector)).norm(2) ** 2
-    else:
-        raise ValueError("Unsupported backend '{:s}'".format(backend))
-
-    return cost, egrad, ehess
+    def run(self):
+        backend = self._arguments["backend"]
+        quiet = self._arguments["quiet"]
+        if not quiet:
+            print(self._name)
+            print("-" * len(self._name))
+            print("Using '{:s}' backend".format(backend))
+            print()
+        self._run_function(quiet=quiet)
 
 
-def run(backend=SUPPORTED_BACKENDS[0], quiet=True):
+
+def run(quiet=True):
     dimension = 3
     num_samples = 200
     num_components = 2
     samples = np.random.randn(num_samples, dimension) @ np.diag([3, 2, 1])
     samples -= samples.mean(axis=0)
+    samples_ = torch.from_numpy(samples)
 
-    cost, egrad, ehess = create_cost_egrad_ehess(
-        backend, samples, num_components)
+    @pymanopt.function.PyTorch
+    def cost(w):
+        projector = torch.matmul(w, torch.transpose(w, 1, 0))
+        return torch.norm(samples_ - torch.matmul(samples_, projector)) ** 2
+
     manifold = Stiefel(dimension, num_components)
-    problem = pymanopt.Problem(manifold, cost, egrad=egrad, ehess=ehess)
+    problem = pymanopt.Problem(manifold, cost, egrad=None, ehess=None)
     if quiet:
         problem.verbosity = 0
 
@@ -112,5 +72,5 @@ def run(backend=SUPPORTED_BACKENDS[0], quiet=True):
 
 
 if __name__ == "__main__":
-    runner = ExampleRunner(run, "PCA", SUPPORTED_BACKENDS)
+    runner = ExampleRunner(run, "PCA")
     runner.run()

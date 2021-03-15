@@ -47,7 +47,11 @@ class _PyTorchBackend(Backend):
     def compile_function(self, function, arguments):
         @functools.wraps(function)
         def wrapper(*args):
-            return function(*map(self._from_numpy, args)).numpy()
+            x = function(*map(self._from_numpy, args))
+            if type(x) in (list, tuple):
+                return [l.numpy() for l in x]
+            else:
+                return x.numpy()
         return wrapper
 
     def _sanitize_gradient(self, tensor):
